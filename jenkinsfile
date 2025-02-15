@@ -1,0 +1,119 @@
+pipeline {
+    agent any
+
+    environment {
+        BASE_URL = ""
+    }
+
+    stages {
+        // Stage 1: Obtener el Código Fuente
+        stage('Get Code') {
+            steps {
+                script {
+                    git branch: 'develop', credentialsId: 'unirCP1b', url: 'https://github.com/julianxttecn05/todo-list-aws.git'
+                }
+            }
+        }
+
+        // Stage 2: Pruebas de Análisis Estático (Flake8 y Bandit)
+        stage('Static Test') {
+            steps {
+                script {
+                    sh '''
+                    cd src
+                    pip install --user flake8 bandit
+                    export PATH=$PATH:$HOME/.local/bin  # Agregar Bandit al PATH
+                    python -m flake8 --exit-zero --format=pylint . > flake8.out
+                    bandit --exit-zero -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
+                    '''
+                }
+                recordIssues tools: [flake8(name: 'Flake8', pattern: '**/flake8.out')]
+                recordIssues tools: [pyLint(name: 'Bandit', pattern: '**/bandit.out')]
+            }
+        }
+
+        // Stage 3: Construcción
+        stage('Build') {
+            steps {
+                sh 'sam build'
+            }
+        }
+
+        // Stage 4: Despliegue
+        stage('Deploy') {
+            steps {
+                sh 'sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar'
+            }
+        }
+
+        // Stage 5: Obtener la URL de la API
+        stage('Set API URL') {
+            steps {
+                script {
+                    BASE_URL = sh(script: '''
+                        aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
+                        --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
+                        --region us-east-1 --output text
+                    ''', returnStdout: true).trim()
+                    echo "BASE_URL: ${BASE_URL}"
+                }
+            }
+        }
+
+        // Stage 6: Pruebas de Integración
+        stage('Rest Test') {
+            steps {
+                script {
+                    sh '''
+                    export BASE_URL=$(aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
+                        --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
+                        --region us-east-1 --output text)
+                    echo "BASE_URL: $BASE_URL"
+                    
+                    # Ejecutar Pytest y guardar salida
+                    pytest test/integration/todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
+                    '''
+                }
+                archiveArtifacts artifacts: 'pytest_output.log', fingerprint: true
+            }
+        }
+
+        // Stage 7: Promover a Producción
+        stage('Promote') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'unirCP1b', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
+                        sh '''
+                        cd /var/lib/jenkins/.jenkins/workspace/JenkinsEC2/DespliegueCI-develop
+                        git config --global user.email "jenkins@yourcompany.com"
+                        git config --global user.name "Jenkins CI"
+                        git checkout master
+                        git pull origin master
+                        git merge --no-ff develop -m "Promoting develop to master for release"
+                        date > release.txt
+                        git add release.txt
+                        git commit -m "Marking this version as release"
+                        
+                        # Configurar credenciales para el push
+                        export GIT_ASKPASS=/tmp/git-askpass.sh
+                        echo '#!/bin/sh' > $GIT_ASKPASS
+                        echo 'echo $GIT_PASSWORD' >> $GIT_ASKPASS
+                        chmod +x $GIT_ASKPASS
+                        git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/julianxttecn05/todo-list-aws.git master
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: '**/*.xml', fingerprint: true
+            junit '**/pytest-integration-report.xml'
+        }
+        failure {
+            echo 'Pipeline Failed! Please check the logs.'
+        }
+    }
+}
