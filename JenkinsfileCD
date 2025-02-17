@@ -1,0 +1,70 @@
+pipeline {
+    agent any
+
+    environment {
+        BASE_URL = ""
+    }
+
+    stages {
+        // Etapa 1: Obtener Código desde la rama master
+        stage('Get Code') {
+            steps {
+                script {
+                    git branch: 'master', url: 'https://github.com/julianxttecn05/todo-list-aws.git'
+                }
+            }
+        }
+
+        // Etapa 2: Despliegue en producción
+        stage('Deploy') {
+            steps {
+                sh 'sam deploy --config-env production --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar'
+            }
+        }
+
+        // Etapa 3: Obtener la URL de la API en producción
+        stage('Set API URL') {
+            steps {
+                script {
+                    BASE_URL = sh(script: '''
+                        aws cloudformation describe-stacks --stack-name todo-list-aws-production \
+                        --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
+                        --region us-east-1 --output text
+                    ''', returnStdout: true).trim()
+                    echo "BASE_URL: ${BASE_URL}"
+                }
+            }
+        }
+
+        // Etapa 4: Pruebas de integración solo de lectura
+        stage('Rest Test') {
+            steps {
+                script {
+                    sh '''
+                    cd /var/lib/jenkins/.jenkins/workspace/JenkinsEC2/Pipeline-CD
+                    export PATH=$PATH:$HOME/.local/bin
+                    export BASE_URL=$(aws cloudformation describe-stacks --stack-name todo-list-aws-production \
+                        --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
+                        --region us-east-1 --output text)
+                    echo "BASE_URL: $BASE_URL"
+                    
+                    # Ejecutar solo pruebas de solo lectura
+                    pytest -m "readonly" test/integration/todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
+                    '''
+                }
+                archiveArtifacts artifacts: 'pytest_output.log', fingerprint: true
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: '**/*.xml', fingerprint: true
+            junit '**/pytest-integration-report.xml'
+        }
+        failure {
+            echo 'Pipeline Failed! Please check the logs.'
+        }
+    }
+}
+
