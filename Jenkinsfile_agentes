@@ -26,7 +26,7 @@ pipeline {
                     echo "Ejecutando en: $(whoami)@$(hostname)"
                     cd /home/ubuntu/jenkins-agents/agent2/workspace/JenkinsEC2/CICD_agentes/src
                     pip install --user flake8 bandit
-                    export PATH=$PATH:$HOME/.local/bin
+                    export PATH=$HOME/.local/bin:$PATH
                     python -m flake8 --exit-zero --format=pylint . > flake8.out
                     bandit --exit-zero -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
                     '''
@@ -65,12 +65,17 @@ pipeline {
             steps {
                 script {
                     BASE_URL = sh(script: '''
-                        echo "Ejecutando en: $(whoami)@$(hostname)"
                         aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
                         --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
-                        --region us-east-1 --output text
+                        --region us-east-1 --output text | tail -n 1
                     ''', returnStdout: true).trim()
-                    echo "BASE_URL: ${BASE_URL}"
+
+                    if (!BASE_URL?.startsWith("http")) {
+                        error "Error: BASE_URL no válido o vacío. Verifica la API Gateway."
+                    }
+
+                    echo "BASE_URL asignado correctamente: ${BASE_URL}"
+                    env.BASE_URL = BASE_URL  // Se pasa a variable de entorno para Rest Test
                 }
             }
         }
@@ -82,16 +87,22 @@ pipeline {
                     sh '''
                     echo "Ejecutando en: $(whoami)@$(hostname)"
                     cd /home/ubuntu/jenkins-agents/agent3/workspace/JenkinsEC2/CICD_agentes/test/integration
-                    export PATH=$PATH:$HOME/.local/bin
-                    BASE_URL=$(aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
+                    export PATH=$HOME/.local/bin:$PATH
+                    export BASE_URL=$(aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
                         --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
-                        --region us-east-1 --output text)
+                        --region us-east-1 --output text | tail -n 1)
+                    
                     echo "BASE_URL: $BASE_URL"
+                    if [ -z "$BASE_URL" ]; then
+                        echo "Error: BASE_URL está vacío. Abortando..."
+                        exit 1
+                    fi
 
-                    pytest todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
+                    pytest todoApiTest.py --junitxml=test/integration/pytest-integration-report.xml | tee test/integration/pytest_output.log
                     '''
                 }
-                archiveArtifacts artifacts: 'pytest_output.log', fingerprint: true
+                archiveArtifacts artifacts: 'test/integration/pytest_output.log', fingerprint: true
+                junit 'test/integration/pytest-integration-report.xml'
             }
         }
     }
@@ -99,7 +110,7 @@ pipeline {
     post {
         always {
             archiveArtifacts artifacts: '**/*.xml', fingerprint: true
-            junit '**/pytest-integration-report.xml'
+            junit '**/test/integration/pytest-integration-report.xml'
         }
         failure {
             echo 'Pipeline Failed! Please check the logs.'
