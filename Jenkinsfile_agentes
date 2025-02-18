@@ -10,7 +10,9 @@ pipeline {
             agent { label 'master' }
             steps {
                 script {
-                    sh 'echo "Ejecutando en: $(whoami)@$(hostname)"'
+                    sh '''
+                    echo "Ejecutando en: $(whoami)@$(hostname)"
+                    '''
                     git branch: 'develop', url: 'https://github.com/julianxttecn05/todo-list-aws.git'
                 }
             }
@@ -20,8 +22,8 @@ pipeline {
             agent { label 'agent2' }
             steps {
                 script {
-                    sh 'echo "Ejecutando en: $(whoami)@$(hostname)"'
                     sh '''
+                    echo "Ejecutando en: $(whoami)@$(hostname)"
                     cd /home/ubuntu/jenkins-agents/agent2/workspace/JenkinsEC2/CICD_agentes/src
                     pip install --user flake8 bandit
                     export PATH=$PATH:$HOME/.local/bin
@@ -38,8 +40,10 @@ pipeline {
             agent { label 'master' }
             steps {
                 script {
-                    sh 'echo "Ejecutando en: $(whoami)@$(hostname)"'
-                    sh 'sam build'
+                    sh '''
+                    echo "Ejecutando en: $(whoami)@$(hostname)"
+                    sam build
+                    '''
                 }
             }
         }
@@ -48,8 +52,10 @@ pipeline {
             agent { label 'master' }
             steps {
                 script {
-                    sh 'echo "Ejecutando en: $(whoami)@$(hostname)"'
-                    sh 'sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar --resolve-s3'
+                    sh '''
+                    echo "Ejecutando en: $(whoami)@$(hostname)"
+                    sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar
+                    '''
                 }
             }
         }
@@ -58,17 +64,13 @@ pipeline {
             agent { label 'master' }
             steps {
                 script {
-                    sh 'echo "Ejecutando en: $(whoami)@$(hostname)"'
                     BASE_URL = sh(script: '''
+                        echo "Ejecutando en: $(whoami)@$(hostname)"
                         aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
                         --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
                         --region us-east-1 --output text
                     ''', returnStdout: true).trim()
-                    
                     echo "BASE_URL: ${BASE_URL}"
-                    
-                    // Exportar BASE_URL a las siguientes etapas
-                    env.BASE_URL = BASE_URL
                 }
             }
         }
@@ -77,19 +79,19 @@ pipeline {
             agent { label 'agent3' }
             steps {
                 script {
-                    sh 'echo "Ejecutando en: $(whoami)@$(hostname)"'
                     sh '''
+                    echo "Ejecutando en: $(whoami)@$(hostname)"
                     cd /home/ubuntu/jenkins-agents/agent3/workspace/JenkinsEC2/CICD_agentes/test/integration
                     export PATH=$PATH:$HOME/.local/bin
-                    export BASE_URL=${BASE_URL}
-                    
+                    BASE_URL=$(aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
+                        --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
+                        --region us-east-1 --output text)
                     echo "BASE_URL: $BASE_URL"
-                    
+
                     pytest todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
                     '''
                 }
-                archiveArtifacts artifacts: 'test/integration/pytest_output.log', fingerprint: true
-                junit 'test/integration/pytest-integration-report.xml'
+                archiveArtifacts artifacts: 'pytest_output.log', fingerprint: true
             }
         }
     }
@@ -97,11 +99,10 @@ pipeline {
     post {
         always {
             archiveArtifacts artifacts: '**/*.xml', fingerprint: true
+            junit '**/pytest-integration-report.xml'
         }
         failure {
-            script {
-                sh 'echo "Pipeline Failed! Please check the logs."'
-            }
+            echo 'Pipeline Failed! Please check the logs.'
         }
     }
 }
