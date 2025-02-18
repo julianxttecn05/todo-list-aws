@@ -8,7 +8,7 @@ pipeline {
 
     stages {
         stage('Get Code') {
-            agent { label 'master' }
+            agent { label 'principal' }
             steps {
                 script {
                     git branch: 'develop', url: 'https://github.com/julianxttecn05/todo-list-aws.git'
@@ -34,21 +34,21 @@ pipeline {
         }
 
         stage('Build') {
-            agent { label 'master' }
+            agent { label 'principal' }
             steps {
                 sh 'sam build'
             }
         }
 
         stage('Deploy') {
-            agent { label 'master' }
+            agent { label 'principal' }
             steps {
                 sh 'sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar'
             }
         }
 
         stage('Set API URL') {
-            agent { label 'master' }
+            agent { label 'principal' }
             steps {
                 script {
                     BASE_URL = sh(script: '''
