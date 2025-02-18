@@ -100,7 +100,7 @@ pipeline {
     post {
         always {
             archiveArtifacts artifacts: '**/*.xml', fingerprint: true
-            junit '**/test/integration/pytest-integration-report.xml'
+            junit 'test/integration/pytest-integration-report.xml'
         }
         failure {
             echo 'Pipeline Failed! Please check the logs.'
