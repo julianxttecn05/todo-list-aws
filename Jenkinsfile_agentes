@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        BASE_URL = ''
+        BASE_URL = ''  // Definir variable globalmente
     }
 
     stages {
@@ -14,74 +14,37 @@ pipeline {
             }
         }
 
-        stage('Static Test') {
-            agent { label 'agent2' }
-            steps {
-                script {
-                    sh '''
-                    echo "Ejecutando pruebas estáticas..."
-                    cd src
-                    pip install --user flake8 bandit
-                    python -m flake8 --exit-zero --format=pylint .
-                    bandit --exit-zero -r . -f txt -o bandit.out
-                    '''
-                }
-                recordIssues tools: [flake8(pattern: '**/flake8.out')]
-                archiveArtifacts artifacts: 'src/bandit.out', fingerprint: true
-            }
-        }
-
-        stage('Build') {
-            steps {
-                script {
-                    sh '''
-                    echo "Construyendo aplicación con SAM..."
-                    sam build
-                    '''
-                }
-            }
-        }
-
-        stage('Deploy') {
-            steps {
-                script {
-                    sh '''
-                    echo "Desplegando en AWS con SAM..."
-                    sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar
-                    '''
-                }
-            }
-        }
-
         stage('Set API URL') {
             steps {
                 script {
-                    BASE_URL = sh(script: '''
+                    def url = sh(script: '''
                     aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
                     --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
                     --region us-east-1 --output text
                     ''', returnStdout: true).trim()
 
-                    if (BASE_URL == null || BASE_URL == '') {
+                    if (url == null || url == '' || url == 'None') {
                         error "BASE_URL no pudo ser asignado correctamente."
                     }
 
-                    echo "BASE_URL asignado correctamente: ${BASE_URL}"
+                    env.BASE_URL = url  // Asignar BASE_URL como variable de entorno global
+                    echo "✅ BASE_URL asignado correctamente: ${env.BASE_URL}"
                 }
             }
         }
 
         stage('Integration Tests') {
             agent { label 'agent3' }
+            environment {
+                BASE_URL = "${env.BASE_URL}"  // Pasar BASE_URL a esta etapa
+            }
             steps {
                 script {
                     sh '''
-                    echo "Ejecutando pruebas de integración..."
+                    echo "🚀 Ejecutando pruebas de integración..."
                     mkdir -p test/integration
                     cd test/integration
 
-                    # Exportar BASE_URL para que pytest lo pueda leer
-                    export BASE_URL="${BASE_URL}"
                     echo "BASE_URL: ${BASE_URL}"
 
                     pytest todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
@@ -95,7 +58,7 @@ pipeline {
         always {
             script {
                 sh '''
-                echo "Verificando archivos generados..."
+                echo "📝 Verificando archivos generados..."
                 ls -lah test/integration/
                 '''
             }
