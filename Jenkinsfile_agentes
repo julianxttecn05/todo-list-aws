@@ -2,15 +2,14 @@ pipeline {
     agent any
 
     environment {
-        BASE_URL = ""
+        BASE_URL = ''
     }
 
     stages {
-        stage('Get Code') {
-            agent { label 'master' }
+        stage('Checkout Code') {
             steps {
                 script {
-                    git branch: 'develop', url: 'https://github.com/julianxttecn05/todo-list-aws.git'
+                    checkout scm
                 }
             }
         }
@@ -20,90 +19,84 @@ pipeline {
             steps {
                 script {
                     sh '''
-                    echo "Ejecutando en: $(whoami)@$(hostname)"
+                    echo "Ejecutando pruebas estáticas..."
                     cd src
                     pip install --user flake8 bandit
-                    python -m flake8 --exit-zero --format=pylint . > flake8.out
+                    python -m flake8 --exit-zero --format=pylint .
                     bandit --exit-zero -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
                     '''
                 }
-                recordIssues tools: [flake8(name: 'Flake8', pattern: '**/flake8.out')]
-                recordIssues tools: [pyLint(name: 'Bandit', pattern: '**/bandit.out')]
+                recordIssues tools: [flake8(pattern: '**/flake8.out'), bandit(pattern: '**/bandit.out')]
             }
         }
 
         stage('Build') {
-            agent { label 'master' }
             steps {
                 script {
-                    sh 'sam build'
+                    sh '''
+                    echo "Construyendo aplicación con SAM..."
+                    sam build
+                    '''
                 }
             }
         }
 
         stage('Deploy') {
-            agent { label 'master' }
             steps {
                 script {
-                    sh 'sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar'
+                    sh '''
+                    echo "Desplegando en AWS con SAM..."
+                    sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar
+                    '''
                 }
             }
         }
 
         stage('Set API URL') {
-            agent { label 'master' }
             steps {
                 script {
                     BASE_URL = sh(script: '''
-                        aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
-                        --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
-                        --region us-east-1 --output text | tail -n 1
+                    aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
+                    --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
+                    --region us-east-1 --output text
                     ''', returnStdout: true).trim()
 
-                    if (!BASE_URL?.startsWith("http")) {
-                        error "Error: BASE_URL no válido o vacío."
-                    }
-
                     echo "BASE_URL asignado correctamente: ${BASE_URL}"
-                    env.BASE_URL = BASE_URL
                 }
             }
         }
 
-        stage('Rest Test') {
+        stage('Integration Tests') {
             agent { label 'agent3' }
             steps {
                 script {
                     sh '''
-                    echo "Ejecutando en: $(whoami)@$(hostname)"
+                    echo "Ejecutando pruebas de integración..."
                     mkdir -p test/integration
                     cd test/integration
-                    export BASE_URL=$(aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
-                        --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
-                        --region us-east-1 --output text | tail -n 1)
-                    
-                    echo "BASE_URL: $BASE_URL"
-                    if [ -z "$BASE_URL" ]; then
-                        echo "Error: BASE_URL está vacío. Abortando..."
-                        exit 1
-                    fi
-
                     pytest todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
                     '''
                 }
-                archiveArtifacts artifacts: 'test/integration/pytest_output.log', fingerprint: true
-                junit 'test/integration/pytest-integration-report.xml'
             }
         }
     }
 
     post {
         always {
-            archiveArtifacts artifacts: '**/*.xml', fingerprint: true
+            script {
+                sh '''
+                echo "Verificando archivos de prueba..."
+                ls -lah test/integration/
+                '''
+            }
+            archiveArtifacts artifacts: 'test/integration/pytest-integration-report.xml', fingerprint: true
             junit 'test/integration/pytest-integration-report.xml'
         }
         failure {
-            echo 'Pipeline Failed! Please check the logs.'
+            echo '❌ Pipeline Failed! Please check the logs.'
+        }
+        success {
+            echo '✅ Pipeline Completed Successfully!'
         }
     }
 }
