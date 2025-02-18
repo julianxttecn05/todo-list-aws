@@ -62,6 +62,10 @@ pipeline {
                     --region us-east-1 --output text
                     ''', returnStdout: true).trim()
 
+                    if (BASE_URL == null || BASE_URL == '') {
+                        error "BASE_URL no pudo ser asignado correctamente."
+                    }
+
                     echo "BASE_URL asignado correctamente: ${BASE_URL}"
                 }
             }
@@ -75,6 +79,11 @@ pipeline {
                     echo "Ejecutando pruebas de integración..."
                     mkdir -p test/integration
                     cd test/integration
+
+                    # Exportar BASE_URL para que pytest lo pueda leer
+                    export BASE_URL="${BASE_URL}"
+                    echo "BASE_URL: ${BASE_URL}"
+
                     pytest todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
                     '''
                 }
