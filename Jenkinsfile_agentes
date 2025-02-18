@@ -23,10 +23,11 @@ pipeline {
                     cd src
                     pip install --user flake8 bandit
                     python -m flake8 --exit-zero --format=pylint .
-                    bandit --exit-zero -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
+                    bandit --exit-zero -r . -f txt -o bandit.out
                     '''
                 }
-                recordIssues tools: [flake8(pattern: '**/flake8.out'), bandit(pattern: '**/bandit.out')]
+                recordIssues tools: [flake8(pattern: '**/flake8.out')]
+                archiveArtifacts artifacts: 'src/bandit.out', fingerprint: true
             }
         }
 
@@ -85,7 +86,7 @@ pipeline {
         always {
             script {
                 sh '''
-                echo "Verificando archivos de prueba..."
+                echo "Verificando archivos generados..."
                 ls -lah test/integration/
                 '''
             }
