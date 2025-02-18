@@ -3,6 +3,7 @@ pipeline {
 
     environment {
         BASE_URL = ""
+        BRANCH_NAME = ""
     }
 
     stages {
@@ -10,13 +11,16 @@ pipeline {
             agent { label 'master' }
             steps {
                 script {
+                    BRANCH_NAME = sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
                     echo "Ejecutando en: $(whoami)@$(hostname)"
-                    git branch: 'develop', url: 'https://github.com/julianxttecn05/todo-list-aws.git'
+                    echo "Rama actual: ${BRANCH_NAME}"
+                    git branch: BRANCH_NAME, url: 'https://github.com/julianxttecn05/todo-list-aws.git'
                 }
             }
         }
 
         stage('Static Test') {
+            when { expression { BRANCH_NAME == 'develop' } }  // Solo en develop (CI)
             agent { label 'agent2' }
             steps {
                 script {
@@ -34,22 +38,17 @@ pipeline {
             }
         }
 
-        stage('Build') {
+        stage('Build & Deploy') {
             agent { label 'master' }
             steps {
                 script {
                     echo "Ejecutando en: $(whoami)@$(hostname)"
                     sh 'sam build'
-                }
-            }
-        }
-
-        stage('Deploy') {
-            agent { label 'master' }
-            steps {
-                script {
-                    echo "Ejecutando en: $(whoami)@$(hostname)"
-                    sh 'sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar'
+                    if (BRANCH_NAME == 'develop') {
+                        sh 'sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar'
+                    } else if (BRANCH_NAME == 'master') {
+                        sh 'sam deploy --config-env production --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar'
+                    }
                 }
             }
         }
@@ -59,17 +58,19 @@ pipeline {
             steps {
                 script {
                     echo "Ejecutando en: $(whoami)@$(hostname)"
-                    BASE_URL = sh(script: '''
-                        aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
+                    def stack_name = (BRANCH_NAME == 'develop') ? "todo-list-aws-staging" : "todo-list-aws-production"
+                    BASE_URL = sh(script: """
+                        aws cloudformation describe-stacks --stack-name ${stack_name} \
                         --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
                         --region us-east-1 --output text
-                    ''', returnStdout: true).trim()
+                    """, returnStdout: true).trim()
                     echo "BASE_URL: ${BASE_URL}"
                 }
             }
         }
 
         stage('Rest Test') {
+            when { expression { BRANCH_NAME == 'develop' } }  // Solo en develop (CI)
             agent { label 'agent3' }
             steps {
                 script {
