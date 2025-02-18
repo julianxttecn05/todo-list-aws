@@ -1,4 +1,3 @@
-
 pipeline {
     agent any
 
@@ -8,7 +7,7 @@ pipeline {
 
     stages {
         stage('Get Code') {
-            agent { label 'principal' }
+            agent { label 'master' }
             steps {
                 script {
                     git branch: 'develop', url: 'https://github.com/julianxttecn05/todo-list-aws.git'
@@ -21,7 +20,7 @@ pipeline {
             steps {
                 script {
                     sh '''
-                    cd /home/ubuntu/jenkins-agents/agent2/workspace/CICD_agentes/src
+                    cd $WORKSPACE/src
                     pip install --user flake8 bandit
                     export PATH=$PATH:$HOME/.local/bin
                     python -m flake8 --exit-zero --format=pylint . > flake8.out
@@ -34,21 +33,21 @@ pipeline {
         }
 
         stage('Build') {
-            agent { label 'principal' }
+            agent { label 'master' }
             steps {
                 sh 'sam build'
             }
         }
 
         stage('Deploy') {
-            agent { label 'principal' }
+            agent { label 'master' }
             steps {
                 sh 'sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar'
             }
         }
 
         stage('Set API URL') {
-            agent { label 'principal' }
+            agent { label 'master' }
             steps {
                 script {
                     BASE_URL = sh(script: '''
@@ -66,14 +65,13 @@ pipeline {
             steps {
                 script {
                     sh '''
-                    cd /home/ubuntu/jenkins-agents/agent3/workspace/CICD_agentes
+                    cd $WORKSPACE/test/integration
                     export PATH=$PATH:$HOME/.local/bin
                     BASE_URL=$(aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
                         --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
                         --region us-east-1 --output text)
                     echo "BASE_URL: $BASE_URL"
-                    
-                    pytest test/integration/todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
+                    pytest todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
                     '''
                 }
                 archiveArtifacts artifacts: 'pytest_output.log', fingerprint: true
