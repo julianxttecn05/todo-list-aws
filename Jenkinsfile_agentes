@@ -1,0 +1,76 @@
+pipeline {
+    agent none  // No usamos un solo agente, sino que distribuimos tareas
+
+    stages {
+        stage('Get Code') {
+            agent { label 'master' }
+            steps {
+                git branch: '*/${env.BRANCH_NAME}', url: 'https://github.com/julianxttecn05/todo-list-aws.git'
+            }
+        }
+
+        stage('Static Test') {
+            agent { label 'agent2' }
+            steps {
+                sh '''
+                cd src
+                pip install --user flake8 bandit
+                export PATH=$PATH:$HOME/.local/bin  
+                python -m flake8 --exit-zero --format=pylint . > flake8.out
+                bandit --exit-zero -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: '**/flake8.out, **/bandit.out'
+                }
+            }
+        }
+
+        stage('Build & Deploy') {
+            agent { label 'master' }
+            steps {
+                script {
+                    def envType = (env.BRANCH_NAME == 'develop') ? 'staging' : 'production'
+                    sh "sam build"
+                    sh "sam deploy --config-env ${envType} --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar"
+                }
+            }
+        }
+
+        stage('Set API URL') {
+            agent { label 'master' }
+            steps {
+                script {
+                    def stackName = (env.BRANCH_NAME == 'develop') ? 'todo-list-aws-staging' : 'todo-list-aws-production'
+                    env.BASE_URL = sh(script: "aws cloudformation describe-stacks --stack-name ${stackName} --query 'Stacks[0].Outputs[?OutputKey==`BaseUrlApi`].OutputValue' --region us-east-1 --output text", returnStdout: true).trim()
+                    echo "BASE_URL: ${env.BASE_URL}"
+                }
+            }
+        }
+
+        stage('Rest Test') {
+            agent { label 'agent3' }
+            steps {
+                script {
+                    sh '''
+                    export BASE_URL=${BASE_URL}
+                    pytest test/integration/todoApiTest.py --junitxml=pytest-integration-report.xml
+                    '''
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'pytest-integration-report.xml'
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            junit '**/pytest-integration-report.xml'
+        }
+    }
+}
+
