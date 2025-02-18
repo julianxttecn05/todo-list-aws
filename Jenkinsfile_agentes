@@ -3,7 +3,6 @@ pipeline {
 
     environment {
         BASE_URL = ""
-        BRANCH_NAME = ""
     }
 
     stages {
@@ -11,20 +10,17 @@ pipeline {
             agent { label 'master' }
             steps {
                 script {
-                    BRANCH_NAME = sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
-                    echo "Ejecutando en: $(whoami)@$(hostname)"
-                    echo "Rama actual: ${BRANCH_NAME}"
-                    git branch: BRANCH_NAME, url: 'https://github.com/julianxttecn05/todo-list-aws.git'
+                    sh 'echo "Ejecutando en: $(whoami)@$(hostname)"'
+                    git branch: 'develop', url: 'https://github.com/julianxttecn05/todo-list-aws.git'
                 }
             }
         }
 
         stage('Static Test') {
-            when { expression { BRANCH_NAME == 'develop' } }  // Solo en develop (CI)
             agent { label 'agent2' }
             steps {
                 script {
-                    echo "Ejecutando en: $(whoami)@$(hostname)"
+                    sh 'echo "Ejecutando en: $(whoami)@$(hostname)"'
                     sh '''
                     cd /home/ubuntu/jenkins-agents/agent2/workspace/JenkinsEC2/CICD_agentes/src
                     pip install --user flake8 bandit
@@ -38,17 +34,22 @@ pipeline {
             }
         }
 
-        stage('Build & Deploy') {
+        stage('Build') {
             agent { label 'master' }
             steps {
                 script {
-                    echo "Ejecutando en: $(whoami)@$(hostname)"
+                    sh 'echo "Ejecutando en: $(whoami)@$(hostname)"'
                     sh 'sam build'
-                    if (BRANCH_NAME == 'develop') {
-                        sh 'sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar'
-                    } else if (BRANCH_NAME == 'master') {
-                        sh 'sam deploy --config-env production --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar'
-                    }
+                }
+            }
+        }
+
+        stage('Deploy') {
+            agent { label 'master' }
+            steps {
+                script {
+                    sh 'echo "Ejecutando en: $(whoami)@$(hostname)"'
+                    sh 'sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar'
                 }
             }
         }
@@ -57,24 +58,22 @@ pipeline {
             agent { label 'master' }
             steps {
                 script {
-                    echo "Ejecutando en: $(whoami)@$(hostname)"
-                    def stack_name = (BRANCH_NAME == 'develop') ? "todo-list-aws-staging" : "todo-list-aws-production"
-                    BASE_URL = sh(script: """
-                        aws cloudformation describe-stacks --stack-name ${stack_name} \
+                    sh 'echo "Ejecutando en: $(whoami)@$(hostname)"'
+                    BASE_URL = sh(script: '''
+                        aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
                         --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
                         --region us-east-1 --output text
-                    """, returnStdout: true).trim()
+                    ''', returnStdout: true).trim()
                     echo "BASE_URL: ${BASE_URL}"
                 }
             }
         }
 
         stage('Rest Test') {
-            when { expression { BRANCH_NAME == 'develop' } }  // Solo en develop (CI)
             agent { label 'agent3' }
             steps {
                 script {
-                    echo "Ejecutando en: $(whoami)@$(hostname)"
+                    sh 'echo "Ejecutando en: $(whoami)@$(hostname)"'
                     sh '''
                     cd /home/ubuntu/jenkins-agents/agent3/workspace/JenkinsEC2/CICD_agentes/test/integration
                     export PATH=$PATH:$HOME/.local/bin
@@ -94,11 +93,8 @@ pipeline {
     post {
         always {
             archiveArtifacts artifacts: '**/*.xml', fingerprint: true
-            junit 'test/integration/pytest-integration-report.xml'
+            junit '**/test/integration/pytest-integration-report.xml'
         }
         failure {
-            echo 'Pipeline Failed! Please check the logs.'
-        }
-    }
-}
+            echo 'Pipeline
 
