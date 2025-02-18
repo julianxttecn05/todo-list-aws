@@ -10,6 +10,7 @@ pipeline {
             agent { label 'master' }
             steps {
                 script {
+                    echo "Ejecutando en: $(whoami)@$(hostname)"
                     git branch: 'develop', url: 'https://github.com/julianxttecn05/todo-list-aws.git'
                 }
             }
@@ -19,8 +20,9 @@ pipeline {
             agent { label 'agent2' }
             steps {
                 script {
+                    echo "Ejecutando en: $(whoami)@$(hostname)"
                     sh '''
-                    cd $WORKSPACE/src
+                    cd /home/ubuntu/jenkins-agents/agent2/workspace/JenkinsEC2/CICD_agentes/src
                     pip install --user flake8 bandit
                     export PATH=$PATH:$HOME/.local/bin
                     python -m flake8 --exit-zero --format=pylint . > flake8.out
@@ -35,14 +37,20 @@ pipeline {
         stage('Build') {
             agent { label 'master' }
             steps {
-                sh 'sam build'
+                script {
+                    echo "Ejecutando en: $(whoami)@$(hostname)"
+                    sh 'sam build'
+                }
             }
         }
 
         stage('Deploy') {
             agent { label 'master' }
             steps {
-                sh 'sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar'
+                script {
+                    echo "Ejecutando en: $(whoami)@$(hostname)"
+                    sh 'sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar'
+                }
             }
         }
 
@@ -50,6 +58,7 @@ pipeline {
             agent { label 'master' }
             steps {
                 script {
+                    echo "Ejecutando en: $(whoami)@$(hostname)"
                     BASE_URL = sh(script: '''
                         aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
                         --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
@@ -64,17 +73,19 @@ pipeline {
             agent { label 'agent3' }
             steps {
                 script {
+                    echo "Ejecutando en: $(whoami)@$(hostname)"
                     sh '''
-                    cd $WORKSPACE/test/integration
+                    cd /home/ubuntu/jenkins-agents/agent3/workspace/JenkinsEC2/CICD_agentes/test/integration
                     export PATH=$PATH:$HOME/.local/bin
                     BASE_URL=$(aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
                         --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
                         --region us-east-1 --output text)
                     echo "BASE_URL: $BASE_URL"
+                    
                     pytest todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
                     '''
                 }
-                archiveArtifacts artifacts: 'pytest_output.log', fingerprint: true
+                archiveArtifacts artifacts: 'test/integration/pytest_output.log', fingerprint: true
             }
         }
     }
@@ -82,7 +93,7 @@ pipeline {
     post {
         always {
             archiveArtifacts artifacts: '**/*.xml', fingerprint: true
-            junit '**/pytest-integration-report.xml'
+            junit 'test/integration/pytest-integration-report.xml'
         }
         failure {
             echo 'Pipeline Failed! Please check the logs.'
