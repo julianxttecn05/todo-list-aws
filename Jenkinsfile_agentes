@@ -95,16 +95,21 @@ pipeline {
                     # Ejecutar Pytest y guardar salida
                     pytest test/integration/todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
                     '''
+
+                    // Guardar los reportes de pruebas en stash para que estén accesibles en master
+                    stash name: 'pytest-report', includes: 'pytest-integration-report.xml, pytest_output.log'
                 }
-                archiveArtifacts artifacts: 'pytest_output.log', fingerprint: true
             }
         }
     }
 
     post {
         always {
-            archiveArtifacts artifacts: '**/*.xml', fingerprint: true
-            junit '**/pytest-integration-report.xml'
+            // Recuperar los reportes desde el stash en master
+            unstash 'pytest-report'
+
+            archiveArtifacts artifacts: 'pytest-integration-report.xml', fingerprint: true
+            junit 'pytest-integration-report.xml'
         }
         failure {
             echo 'Pipeline Failed! Please check the logs.'
