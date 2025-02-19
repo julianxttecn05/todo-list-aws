@@ -2,9 +2,9 @@ pipeline {
     agent any
 
     environment {
-        BASE_URL = ''  // Definir variable globalmente
-        AWS_REGION = 'us-east-1'  // Asegurar que se usa la región correcta
-        STACK_NAME = 'todo-list-aws-staging'  // Nombre de la pila
+        BASE_URL = ''
+        AWS_REGION = 'us-east-1'
+        STACK_NAME = 'todo-list-aws-staging'
     }
 
     stages {
@@ -32,6 +32,11 @@ pipeline {
                         sh """
                             sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar
                         """
+                        
+                        // Esperar a que la pila se cree antes de proceder
+                        sh """
+                            aws cloudformation wait stack-create-complete --stack-name ${STACK_NAME} --region ${AWS_REGION}
+                        """
                     } else {
                         echo "La pila ya existe. Saltando despliegue."
                     }
@@ -43,9 +48,9 @@ pipeline {
             steps {
                 script {
                     def url = sh(script: """
-                    aws cloudformation describe-stacks --stack-name ${STACK_NAME} \
-                    --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
-                    --region ${AWS_REGION} --output text
+                        aws cloudformation describe-stacks --stack-name ${STACK_NAME} \
+                        --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
+                        --region ${AWS_REGION} --output text
                     """, returnStdout: true).trim()
 
                     if (url == null || url == '' || url == 'None') {
@@ -61,7 +66,7 @@ pipeline {
         stage('Integration Tests') {
             agent { label 'agent3' }
             environment {
-                BASE_URL = "${env.BASE_URL}"  // Pasar BASE_URL a esta etapa
+                BASE_URL = "${env.BASE_URL}"
             }
             steps {
                 script {
