@@ -1,27 +1,21 @@
-
 pipeline {
-    agent none  // Se define "none" porque los agentes se especifican en cada etapa
+    agent none  // Se especificarán agentes en cada etapa
 
     environment {
         BASE_URL = ""
-        AWS_REGION = "us-east-1"
-        STACK_NAME = "todo-list-aws-staging"
-        S3_BUCKET = "cp1-d-julian-sanchez-alcazar"
     }
 
     stages {
-        // Stage 1: Obtener el Código Fuente (Ejecutado en el master)
         stage('Get Code') {
             agent { label 'master' }
             steps {
                 script {
-                    sh 'whoami && hostname'  // Identificar el agente
+                    sh 'whoami && hostname'  // Ver dónde se ejecuta
                     git branch: 'develop', credentialsId: 'unirCP1b', url: 'https://github.com/julianxttecn05/todo-list-aws.git'
                 }
             }
         }
 
-        // Stage 2: Pruebas de Análisis Estático (Ejecutado en agent2)
         stage('Static Test') {
             agent { label 'agent2' }
             steps {
@@ -30,7 +24,6 @@ pipeline {
                     whoami && hostname
                     cd src
                     pip install --user flake8 bandit
-                    export PATH=$PATH:$HOME/.local/bin  # Agregar Bandit al PATH
                     python -m flake8 --exit-zero --format=pylint . > flake8.out
                     bandit --exit-zero -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
                     '''
@@ -40,66 +33,50 @@ pipeline {
             }
         }
 
-        // Stage 3: Construcción (Ejecutado en agent2)
         stage('Build') {
             agent { label 'agent2' }
             steps {
-                sh '''
-                whoami && hostname
-                sam build
-                '''
+                sh 'whoami && hostname'
+                sh 'sam build'
             }
         }
 
-        // Stage 4: Despliegue (Ejecutado en master por permisos en AWS)
         stage('Deploy') {
             agent { label 'master' }
             steps {
                 sh '''
                 whoami && hostname
-                sam deploy --config-env staging --no-confirm-changeset --s3-bucket ${S3_BUCKET}
+                sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar
                 '''
             }
         }
 
-        // Stage 5: Obtener la URL de la API (Ejecutado en master)
         stage('Set API URL') {
             agent { label 'master' }
             steps {
                 script {
                     sh 'whoami && hostname'
                     BASE_URL = sh(script: '''
-                        aws cloudformation describe-stacks --stack-name ${STACK_NAME} \
+                        aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
                         --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
-                        --region ${AWS_REGION} --output text
+                        --region us-east-1 --output text
                     ''', returnStdout: true).trim()
-
-                    if (BASE_URL == null || BASE_URL == '' || BASE_URL == 'None') {
-                        error "BASE_URL no pudo ser asignado correctamente."
-                    }
-
                     echo "BASE_URL: ${BASE_URL}"
                     env.BASE_URL = BASE_URL
                 }
             }
         }
 
-        // Stage 6: Pruebas de Integración (Ejecutado en agent3)
         stage('Rest Test') {
             agent { label 'agent3' }
-            environment {
-                BASE_URL = "${env.BASE_URL}"
-            }
             steps {
                 script {
                     sh '''
                     whoami && hostname
-                    export BASE_URL=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} \
+                    export BASE_URL=$(aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
                         --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
-                        --region ${AWS_REGION} --output text)
+                        --region us-east-1 --output text)
                     echo "BASE_URL: $BASE_URL"
-                    
-                    # Ejecutar Pytest y guardar salida
                     pytest test/integration/todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
                     '''
                 }
@@ -110,8 +87,10 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts artifacts: '**/*.xml', fingerprint: true
-            junit '**/pytest-integration-report.xml'
+            node('master') {  // Se añade un nodo para ejecutar post-actions
+                archiveArtifacts artifacts: '**/*.xml', fingerprint: true
+                junit '**/pytest-integration-report.xml'
+            }
         }
         failure {
             echo 'Pipeline Failed! Please check the logs.'
