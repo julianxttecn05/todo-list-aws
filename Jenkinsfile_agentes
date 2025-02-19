@@ -77,7 +77,7 @@ pipeline {
             }
         }
 
-        // Stage 6: Pruebas de Integración (Paralelización solo en el reporte)
+        // Stage 6: Pruebas de Integración (Paralelización solo en la obtención del reporte)
         stage('Rest Test') {
             agent { label 'agent3' }
             steps {
@@ -88,13 +88,14 @@ pipeline {
                     BASE_URL = readFile('BASE_URL.txt').trim()
                     echo "Using BASE_URL: $BASE_URL"
 
-                    // Ejecutar las pruebas de integración
+                    // Ejecutar las pruebas en segundo plano con nohup
                     sh '''
                     export BASE_URL=$(cat BASE_URL.txt)
                     echo "BASE_URL: $BASE_URL"
 
-                    pytest test/integration/todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
-                    ''' &
+                    nohup pytest test/integration/todoApiTest.py --junitxml=pytest-integration-report.xml > pytest_output.log 2>&1 &
+                    echo $! > pytest_pid.txt
+                    '''
                 }
             }
         }
@@ -102,10 +103,14 @@ pipeline {
 
     post {
         always {
-            // Paralelización de la obtención del reporte
+            // Esperar la finalización de pytest antes de recolectar reportes
             script {
                 sh '''
-                echo "Recolectando reportes en paralelo..."
+                if [ -f pytest_pid.txt ]; then
+                    echo "Esperando que pytest termine..."
+                    tail --pid=$(cat pytest_pid.txt) -f /dev/null
+                fi
+                echo "Recolectando reportes..."
                 cat pytest_output.log || true
                 '''
             }
