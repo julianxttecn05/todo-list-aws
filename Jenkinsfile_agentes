@@ -101,14 +101,43 @@ pipeline {
                 }
             }
         }
+
+        // Stage 7: Promover a Producción
+        stage('Promote') {
+            agent { label 'agent3' }
+            steps {
+                script {
+                    sh 'whoami'
+                    sh 'hostname'
+                    withCredentials([usernamePassword(credentialsId: 'unirCP1b', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
+                        sh '''
+                        cd /home/ubuntu/jenkins-agents/agent3/workspace/JenkinsEC2/CICD_agentes
+                        git config --global user.email "jenkins@yourcompany.com"
+                        git config --global user.name "Jenkins CI"
+                        git checkout master
+                        git pull origin master
+                        git merge --no-ff develop -m "Promoting develop to master for release"
+                        date > release.txt
+                        git add release.txt
+                        git commit -m "Marking this version as release"
+
+                        # Configurar credenciales para el push
+                        export GIT_ASKPASS=/tmp/git-askpass.sh
+                        echo '#!/bin/sh' > $GIT_ASKPASS
+                        echo 'echo $GIT_PASSWORD' >> $GIT_ASKPASS
+                        chmod +x $GIT_ASKPASS
+                        git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/julianxttecn05/todo-list-aws.git master
+                        '''
+                    }
+                }
+            }
+        }
     }
 
     post {
         always {
-            // Recuperar los reportes desde el stash en master
             unstash 'pytest-report'
-
-            archiveArtifacts artifacts: 'pytest-integration-report.xml', fingerprint: true
+            archiveArtifacts artifacts: '**/*.xml', fingerprint: true
             junit 'pytest-integration-report.xml'
         }
         failure {
