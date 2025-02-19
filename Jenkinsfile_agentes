@@ -6,7 +6,7 @@ pipeline {
     }
 
     stages {
-        // Stage 1: Obtener el Código Fuente desde develop
+        // Stage 1: Obtener el Código Fuente
         stage('Get Code') {
             agent { label 'master' }
             steps {
@@ -49,7 +49,7 @@ pipeline {
         }
 
         // Stage 4: Despliegue en Staging
-        stage('Deploy to Staging') {
+        stage('Deploy') {
             agent { label 'master' }
             steps {
                 sh 'whoami'
@@ -77,5 +77,38 @@ pipeline {
             }
         }
 
-        // Stage 6: Prue
+        // Stage 6: Pruebas de Integración
+        stage('Rest Test') {
+            agent { label 'agent3' }
+            steps {
+                script {
+                    sh 'whoami'
+                    sh 'hostname'
+                    unstash 'api-url'
+                    BASE_URL = readFile('BASE_URL.txt').trim()
+                    echo "Using BASE_URL: $BASE_URL"
+
+                    sh '''
+                    export BASE_URL=$(cat BASE_URL.txt)
+                    echo "BASE_URL: $BASE_URL"
+                    
+                    # Ejecutar Pytest y guardar salida
+                    pytest test/integration/todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
+                    '''
+                }
+                archiveArtifacts artifacts: 'pytest_output.log', fingerprint: true
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: '**/*.xml', fingerprint: true
+            junit '**/pytest-integration-report.xml'
+        }
+        failure {
+            echo 'Pipeline Failed! Please check the logs.'
+        }
+    }
+}
 
