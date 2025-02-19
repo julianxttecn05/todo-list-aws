@@ -1,27 +1,27 @@
 pipeline {
-    agent none  // El pipeline se ejecutará en distintos agentes en cada etapa
+    agent none  // Definimos que cada etapa elegirá su propio agente
 
     stages {
-        // Etapa 1: Clonar el código en el servidor Jenkins principal (master)
+        // Etapa 1: Obtener código fuente
         stage('Get Code') {
             agent {
                 label 'master'
             }
             steps {
-                checkout scm  // Clonar el repositorio en la rama configurada
+                checkout scm
                 script {
                     sh '''
-                    whoami   # Muestra el usuario ejecutando la tarea
-                    hostname # Muestra el nombre del host
+                    whoami
+                    hostname
                     '''
                 }
             }
         }
 
-        // Etapa 2: Pruebas estáticas de código con Flake8 y Bandit
+        // Etapa 2: Pruebas estáticas (Linting & Seguridad)
         stage('Static Test') {
             agent {
-                label 'agent2'  // Se ejecuta en el agente 2
+                label 'agent2'
             }
             steps {
                 script {
@@ -29,23 +29,21 @@ pipeline {
                     whoami
                     hostname
                     cd src
-                    pip install --user flake8 bandit  # Instalar herramientas de análisis estático
+                    pip install --user flake8 bandit
                     export PATH=/home/ubuntu/.local/bin:$PATH
-                    python -m flake8 --exit-zero --format=pylint .  # Revisar estilo de código
-                    bandit --exit-zero -r . -f custom -o bandit.out --msg-template {abspath}:{line}: [{test_id}] {msg}  # Análisis de seguridad
+                    python -m flake8 --exit-zero --format=pylint . > flake8.out
+                    bandit --exit-zero -r . -f json -o bandit.out
                     '''
                 }
             }
             post {
                 always {
-                    recordIssues(
-                        tools: [flake8(pattern: '**/flake8.out'), bandit(pattern: '**/bandit.out')]
-                    )  // Guardar los resultados de los análisis estáticos
+                    archiveArtifacts artifacts: '**/flake8.out, **/bandit.out', fingerprint: true
                 }
             }
         }
 
-        // Etapa 3: Construcción de la aplicación con AWS SAM
+        // Etapa 3: Construcción de la aplicación
         stage('Build') {
             agent {
                 label 'master'
@@ -55,13 +53,13 @@ pipeline {
                     sh '''
                     whoami
                     hostname
-                    sam build  # Construir el paquete de despliegue para AWS Lambda
+                    sam build
                     '''
                 }
             }
         }
 
-        // Etapa 4: Desplegar la aplicación en AWS utilizando SAM
+        // Etapa 4: Desplegar la aplicación en AWS
         stage('Deploy') {
             agent {
                 label 'master'
@@ -71,13 +69,13 @@ pipeline {
                     sh '''
                     whoami
                     hostname
-                    sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar  # Desplegar en AWS
+                    sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar
                     '''
                 }
             }
         }
 
-        // Etapa 5: Obtener la URL base de la API desde AWS CloudFormation
+        // Etapa 5: Obtener la URL de la API desplegada
         stage('Set API URL') {
             agent {
                 label 'master'
@@ -87,36 +85,34 @@ pipeline {
                     def baseUrl = sh(script: "aws cloudformation describe-stacks --stack-name todo-list-aws-staging --query Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue --region us-east-1 --output text", returnStdout: true).trim()
                     echo "BASE_URL: ${baseUrl}"
                     writeFile file: 'BASE_URL.txt', text: baseUrl
-                    stash includes: 'BASE_URL.txt', name: 'api_url'  // Guardar la URL para la siguiente etapa
+                    stash includes: 'BASE_URL.txt', name: 'api_url'
                 }
             }
         }
 
-        // Etapa 6: Pruebas de integración de la API REST
+        // Etapa 6: Pruebas de integración con la API
         stage('Rest Test') {
             agent {
-                label 'agent3'  // Se ejecuta en el agente 3
+                label 'agent3'
             }
             steps {
                 script {
-                    unstash 'api_url'  // Recuperar la URL de la API
+                    unstash 'api_url'
                     def baseUrl = readFile('BASE_URL.txt').trim()
                     echo "Using BASE_URL: ${baseUrl}"
                     sh '''
-                    cat BASE_URL.txt
                     export BASE_URL=$(cat BASE_URL.txt)
-                    echo "BASE_URL: $BASE_URL"
-                    pytest test/integration/todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log  # Ejecutar pruebas de integración
+                    pytest test/integration/todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
                     '''
-                    stash includes: 'pytest-integration-report.xml, pytest_output.log', name: 'test_results'  // Guardar resultados de las pruebas
+                    stash includes: 'pytest-integration-report.xml, pytest_output.log', name: 'test_results'
                 }
             }
         }
 
-        // Etapa 7: Promocionar el código a producción (merge develop -> master)
+        // Etapa 7: Promocionar a Producción
         stage('Promote') {
             agent {
-                label 'agent3'  // Se ejecuta en el agente 3
+                label 'agent3'
             }
             steps {
                 script {
@@ -125,23 +121,19 @@ pipeline {
                         cd /home/ubuntu/jenkins-agents/agent3/workspace/JenkinsEC2/CICD_agentes
                         git config --global user.email "jenkins@yourcompany.com"
                         git config --global user.name "Jenkins CI"
-
-                        # Cambiar a la rama master y fusionar develop
                         git checkout master
                         git pull origin master
-                        git merge --no-ff origin/develop -m "Promoting develop to master for release"
-
-                        # Crear un archivo de versión y hacer commit
+                        git merge --no-ff develop -m "Promoting develop to master for release"
                         date > release.txt
                         git add release.txt
-                        git commit -m "Marking this version as release"
-
-                        # Configurar credenciales para el push seguro
+                        git commit -m "Marcando esta versión como release"
+                        
+                        # Configurar credenciales para realizar push
                         export GIT_ASKPASS=/tmp/git-askpass.sh
                         echo '#!/bin/sh' > $GIT_ASKPASS
                         echo 'echo $GIT_PASSWORD' >> $GIT_ASKPASS
                         chmod +x $GIT_ASKPASS
-                        git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/julianxttecn05/todo-list-aws.git master  # Subir cambios a GitHub
+                        git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/julianxttecn05/todo-list-aws.git master
                         '''
                     }
                 }
@@ -149,13 +141,16 @@ pipeline {
         }
     }
 
+    // Post Actions: Guardar reportes de pruebas
     post {
         always {
-            archiveArtifacts artifacts: '**/*.xml', fingerprint: true  // Guardar archivos generados en la ejecución
-            junit '**/pytest-integration-report.xml'  // Publicar resultados de pruebas
+            node('master') {  // Aseguramos que se ejecuta en un nodo válido
+                archiveArtifacts artifacts: '**/*.xml', fingerprint: true
+                junit '**/pytest-integration-report.xml'
+            }
         }
         failure {
-            echo 'Pipeline Failed! Please check the logs.'  // Mensaje en caso de fallo
+            echo 'Pipeline Failed! Revisa los logs.'
         }
     }
 }
