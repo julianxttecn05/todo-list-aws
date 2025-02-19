@@ -6,7 +6,7 @@ pipeline {
     }
 
     stages {
-        // Stage 1: Obtener el Código Fuente
+        // Stage 1: Obtener el Código Fuente desde develop
         stage('Get Code') {
             agent { label 'master' }
             steps {
@@ -38,7 +38,7 @@ pipeline {
             }
         }
 
-        // Stage 3: Construcción
+        // Stage 3: Construcción del Artefacto
         stage('Build') {
             agent { label 'master' }
             steps {
@@ -48,8 +48,8 @@ pipeline {
             }
         }
 
-        // Stage 4: Despliegue
-        stage('Deploy') {
+        // Stage 4: Despliegue en Staging
+        stage('Deploy to Staging') {
             agent { label 'master' }
             steps {
                 sh 'whoami'
@@ -58,7 +58,7 @@ pipeline {
             }
         }
 
-        // Stage 5: Obtener la URL de la API
+        // Stage 5: Obtener la URL de Staging
         stage('Set API URL') {
             agent { label 'master' }
             steps {
@@ -77,7 +77,7 @@ pipeline {
             }
         }
 
-        // Stage 6: Pruebas de Integración
+        // Stage 6: Pruebas de Integración (Paralelización solo en el reporte)
         stage('Rest Test') {
             agent { label 'agent3' }
             steps {
@@ -88,21 +88,27 @@ pipeline {
                     BASE_URL = readFile('BASE_URL.txt').trim()
                     echo "Using BASE_URL: $BASE_URL"
 
+                    // Ejecutar las pruebas de integración
                     sh '''
                     export BASE_URL=$(cat BASE_URL.txt)
                     echo "BASE_URL: $BASE_URL"
-                    
-                    # Ejecutar Pytest y guardar salida
+
                     pytest test/integration/todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
-                    '''
+                    ''' &
                 }
-                archiveArtifacts artifacts: 'pytest_output.log', fingerprint: true
             }
         }
     }
 
     post {
         always {
+            // Paralelización de la obtención del reporte
+            script {
+                sh '''
+                echo "Recolectando reportes en paralelo..."
+                cat pytest_output.log || true
+                '''
+            }
             archiveArtifacts artifacts: '**/*.xml', fingerprint: true
             junit '**/pytest-integration-report.xml'
         }
