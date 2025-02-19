@@ -77,49 +77,5 @@ pipeline {
             }
         }
 
-        // Stage 6: Pruebas de Integración (Paralelización solo en la obtención del reporte)
-        stage('Rest Test') {
-            agent { label 'agent3' }
-            steps {
-                script {
-                    sh 'whoami'
-                    sh 'hostname'
-                    unstash 'api-url'
-                    BASE_URL = readFile('BASE_URL.txt').trim()
-                    echo "Using BASE_URL: $BASE_URL"
-
-                    // Ejecutar las pruebas en segundo plano con nohup
-                    sh '''
-                    export BASE_URL=$(cat BASE_URL.txt)
-                    echo "BASE_URL: $BASE_URL"
-
-                    nohup pytest test/integration/todoApiTest.py --junitxml=pytest-integration-report.xml > pytest_output.log 2>&1 &
-                    echo $! > pytest_pid.txt
-                    '''
-                }
-            }
-        }
-    }
-
-    post {
-        always {
-            // Esperar la finalización de pytest antes de recolectar reportes
-            script {
-                sh '''
-                if [ -f pytest_pid.txt ]; then
-                    echo "Esperando que pytest termine..."
-                    tail --pid=$(cat pytest_pid.txt) -f /dev/null
-                fi
-                echo "Recolectando reportes..."
-                cat pytest_output.log || true
-                '''
-            }
-            archiveArtifacts artifacts: '**/*.xml', fingerprint: true
-            junit '**/pytest-integration-report.xml'
-        }
-        failure {
-            echo 'Pipeline Failed! Please check the logs.'
-        }
-    }
-}
+        // Stage 6: Prue
 
