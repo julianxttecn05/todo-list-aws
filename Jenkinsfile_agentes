@@ -3,6 +3,8 @@ pipeline {
 
     environment {
         BASE_URL = ''  // Definir variable globalmente
+        AWS_REGION = 'us-east-1'  // Asegurar que se usa la región correcta
+        STACK_NAME = 'todo-list-aws-staging'  // Nombre de la pila
     }
 
     stages {
@@ -14,21 +16,44 @@ pipeline {
             }
         }
 
+        stage('Deploy') {
+            steps {
+                script {
+                    echo "Desplegando en AWS con SAM..."
+
+                    // Verificar si la pila existe antes de intentar obtener la URL
+                    def stackExists = sh(script: """
+                        aws cloudformation describe-stacks --stack-name ${STACK_NAME} --region ${AWS_REGION} --output text > /dev/null 2>&1
+                        echo \$?
+                    """, returnStdout: true).trim()
+
+                    if (stackExists != "0") {
+                        echo "La pila no existe. Se ejecutará 'sam deploy' para crearla."
+                        sh """
+                            sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar
+                        """
+                    } else {
+                        echo "La pila ya existe. Saltando despliegue."
+                    }
+                }
+            }
+        }
+
         stage('Set API URL') {
             steps {
                 script {
-                    def url = sh(script: '''
-                    aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
+                    def url = sh(script: """
+                    aws cloudformation describe-stacks --stack-name ${STACK_NAME} \
                     --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
-                    --region us-east-1 --output text
-                    ''', returnStdout: true).trim()
+                    --region ${AWS_REGION} --output text
+                    """, returnStdout: true).trim()
 
                     if (url == null || url == '' || url == 'None') {
                         error "BASE_URL no pudo ser asignado correctamente."
                     }
 
                     env.BASE_URL = url  // Asignar BASE_URL como variable de entorno global
-                    echo "✅ BASE_URL asignado correctamente: ${env.BASE_URL}"
+                    echo "BASE_URL asignado correctamente: ${env.BASE_URL}"
                 }
             }
         }
@@ -41,7 +66,7 @@ pipeline {
             steps {
                 script {
                     sh '''
-                    echo "🚀 Ejecutando pruebas de integración..."
+                    echo "Ejecutando pruebas de integración..."
                     mkdir -p test/integration
                     cd test/integration
 
@@ -58,7 +83,7 @@ pipeline {
         always {
             script {
                 sh '''
-                echo "📝 Verificando archivos generados..."
+                echo "Verificando archivos generados..."
                 ls -lah test/integration/
                 '''
             }
@@ -66,10 +91,10 @@ pipeline {
             junit 'test/integration/pytest-integration-report.xml'
         }
         failure {
-            echo '❌ Pipeline Failed! Please check the logs.'
+            echo 'Pipeline Failed! Please check the logs.'
         }
         success {
-            echo '✅ Pipeline Completed Successfully!'
+            echo 'Pipeline Completed Successfully!'
         }
     }
 }
