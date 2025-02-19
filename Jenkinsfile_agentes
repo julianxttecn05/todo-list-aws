@@ -1,29 +1,34 @@
 pipeline {
-    agent none  // Se especificarán agentes en cada etapa
+    agent any
 
     environment {
         BASE_URL = ""
     }
 
     stages {
+        // Stage 1: Obtener el Código Fuente
         stage('Get Code') {
-            agent { label 'master' }
+            agent { label 'agent2' }
             steps {
                 script {
-                    sh 'whoami && hostname'  // Ver dónde se ejecuta
+                    sh 'whoami'
+                    sh 'hostname'
                     git branch: 'develop', credentialsId: 'unirCP1b', url: 'https://github.com/julianxttecn05/todo-list-aws.git'
                 }
             }
         }
 
+        // Stage 2: Pruebas de Análisis Estático (Flake8 y Bandit)
         stage('Static Test') {
-            agent { label 'agent2' }
+            agent { label 'agent3' }
             steps {
                 script {
+                    sh 'whoami'
+                    sh 'hostname'
                     sh '''
-                    whoami && hostname
                     cd src
                     pip install --user flake8 bandit
+                    export PATH=$PATH:$HOME/.local/bin  # Agregar Bandit al PATH
                     python -m flake8 --exit-zero --format=pylint . > flake8.out
                     bandit --exit-zero -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
                     '''
@@ -33,50 +38,57 @@ pipeline {
             }
         }
 
+        // Stage 3: Construcción
         stage('Build') {
-            agent { label 'agent2' }
+            agent { label 'master' }
             steps {
-                sh 'whoami && hostname'
+                sh 'whoami'
+                sh 'hostname'
                 sh 'sam build'
             }
         }
 
+        // Stage 4: Despliegue
         stage('Deploy') {
             agent { label 'master' }
             steps {
-                sh '''
-                whoami && hostname
-                sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar
-                '''
+                sh 'whoami'
+                sh 'hostname'
+                sh 'sam deploy --config-env staging --no-confirm-changeset --s3-bucket cp1-d-julian-sanchez-alcazar'
             }
         }
 
+        // Stage 5: Obtener la URL de la API
         stage('Set API URL') {
-            agent { label 'master' }
+            agent { label 'agent2' }
             steps {
                 script {
-                    sh 'whoami && hostname'
+                    sh 'whoami'
+                    sh 'hostname'
                     BASE_URL = sh(script: '''
                         aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
                         --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
                         --region us-east-1 --output text
                     ''', returnStdout: true).trim()
                     echo "BASE_URL: ${BASE_URL}"
-                    env.BASE_URL = BASE_URL
                 }
             }
         }
 
+        // Stage 6: Pruebas de Integración
         stage('Rest Test') {
             agent { label 'agent3' }
             steps {
                 script {
+                    sh 'whoami'
+                    sh 'hostname'
                     sh '''
-                    whoami && hostname
                     export BASE_URL=$(aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
                         --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
                         --region us-east-1 --output text)
                     echo "BASE_URL: $BASE_URL"
+                    
+                    # Ejecutar Pytest y guardar salida
                     pytest test/integration/todoApiTest.py --junitxml=pytest-integration-report.xml | tee pytest_output.log
                     '''
                 }
@@ -84,27 +96,15 @@ pipeline {
             }
         }
     }
-	post {
-    always {
-        node('master') {
-            script {
-                def xmlFiles = sh(script: "find . -name '*.xml'", returnStdout: true).trim()
-                if (xmlFiles) {
-                    archiveArtifacts artifacts: '**/*.xml', fingerprint: true
-                    junit '**/pytest-integration-report.xml'
-                } else {
-                    echo "No .xml files found. Skipping artifact archiving."
-                }
-            }
+
+    post {
+        always {
+            archiveArtifacts artifacts: '**/*.xml', fingerprint: true
+            junit '**/pytest-integration-report.xml'
         }
-    }
-    failure {
-        echo 'Pipeline Failed! Please check the logs.'
-    }
-}
-
-    
-
+        failure {
+            echo 'Pipeline Failed! Please check the logs.'
+        }
     }
 }
 
