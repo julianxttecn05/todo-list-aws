@@ -8,7 +8,7 @@ pipeline {
     stages {
         // Stage 1: Obtener el Código Fuente
         stage('Get Code') {
-            agent { label 'agent2' }
+            agent { label 'master' }
             steps {
                 script {
                     sh 'whoami'
@@ -20,7 +20,7 @@ pipeline {
 
         // Stage 2: Pruebas de Análisis Estático (Flake8 y Bandit)
         stage('Static Test') {
-            agent { label 'agent3' }
+            agent { label 'agent2' }
             steps {
                 script {
                     sh 'whoami'
@@ -60,7 +60,7 @@ pipeline {
 
         // Stage 5: Obtener la URL de la API
         stage('Set API URL') {
-            agent { label 'agent2' }
+            agent { label 'master' }
             steps {
                 script {
                     sh 'whoami'
@@ -71,6 +71,8 @@ pipeline {
                         --region us-east-1 --output text
                     ''', returnStdout: true).trim()
                     echo "BASE_URL: ${BASE_URL}"
+                    writeFile file: 'BASE_URL.txt', text: BASE_URL
+                    stash name: 'api-url', includes: 'BASE_URL.txt'
                 }
             }
         }
@@ -82,10 +84,12 @@ pipeline {
                 script {
                     sh 'whoami'
                     sh 'hostname'
+                    unstash 'api-url'
+                    BASE_URL = readFile('BASE_URL.txt').trim()
+                    echo "Using BASE_URL: $BASE_URL"
+
                     sh '''
-                    export BASE_URL=$(aws cloudformation describe-stacks --stack-name todo-list-aws-staging \
-                        --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
-                        --region us-east-1 --output text)
+                    export BASE_URL=$(cat BASE_URL.txt)
                     echo "BASE_URL: $BASE_URL"
                     
                     # Ejecutar Pytest y guardar salida
