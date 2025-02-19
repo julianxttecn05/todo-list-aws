@@ -84,17 +84,27 @@ pipeline {
             }
         }
     }
-
-    post {
-        always {
-            node('master') {  // Se añade un nodo para ejecutar post-actions
-                archiveArtifacts artifacts: '**/*.xml', fingerprint: true
-                junit '**/pytest-integration-report.xml'
+	post {
+    always {
+        node('master') {
+            script {
+                def xmlFiles = sh(script: "find . -name '*.xml'", returnStdout: true).trim()
+                if (xmlFiles) {
+                    archiveArtifacts artifacts: '**/*.xml', fingerprint: true
+                    junit '**/pytest-integration-report.xml'
+                } else {
+                    echo "No .xml files found. Skipping artifact archiving."
+                }
             }
         }
-        failure {
-            echo 'Pipeline Failed! Please check the logs.'
-        }
+    }
+    failure {
+        echo 'Pipeline Failed! Please check the logs.'
+    }
+}
+
+    
+
     }
 }
 
