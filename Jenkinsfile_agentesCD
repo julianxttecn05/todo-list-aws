@@ -1,0 +1,109 @@
+pipeline {
+    agent none
+
+    environment {
+        GIT_REPO = "https://github.com/julianxttecn05/todo-list-aws.git"
+        GIT_CREDENTIALS = "unirCP1b"
+        AWS_BUCKET = "cp1-d-julian-sanchez-alcazar"
+        STACK_NAME = "todo-list-aws-prod"
+        AWS_REGION = "us-east-1"
+    }
+
+    stages {
+        // Etapa 1: Obtener el código de la rama master
+        stage('Get Code') {
+            agent { label 'master' }
+            steps {
+                checkout([$class: 'GitSCM', 
+                    branches: [[name: '*/master']],
+                    userRemoteConfigs: [[url: GIT_REPO, credentialsId: GIT_CREDENTIALS]]
+                ])
+                script {
+                    sh "whoami && hostname"
+                }
+            }
+        }
+
+        // Etapa 2: Construcción del proyecto usando AWS SAM
+        stage('Build') {
+            agent { label 'master' }
+            steps {
+                script {
+                    sh '''
+                    sam build
+                    '''
+                }
+            }
+        }
+
+        // Etapa 3: Despliegue del stack en AWS usando SAM
+        stage('Deploy') {
+            agent { label 'master' }
+            steps {
+                script {
+                    sh '''
+                    sam deploy --stack-name ${STACK_NAME} \
+                               --s3-bucket ${AWS_BUCKET} \
+                               --region ${AWS_REGION} \
+                               --capabilities CAPABILITY_IAM \
+                               --no-confirm-changeset
+                    '''
+                }
+            }
+        }
+
+        // Etapa 4: Obtener la URL de la API y almacenarla
+        stage('Set API URL') {
+            agent { label 'master' }
+            steps {
+                script {
+                    def baseUrl = sh(script: "aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue --region ${AWS_REGION} --output text", returnStdout: true).trim()
+                    echo "BASE_URL: ${baseUrl}"
+                    writeFile file: 'BASE_URL.txt', text: baseUrl
+                    stash name: 'api_url', includes: 'BASE_URL.txt'
+                }
+            }
+        }
+
+        // Etapa 5: Promoción de la nueva versión
+        stage('Promote') {
+            agent { label 'agent3' }
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: GIT_CREDENTIALS, usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
+                        sh '''
+                        cd /home/ubuntu/jenkins-agents/agent3/workspace/JenkinsEC2/CICD_agentes
+                        git config --global user.email "jenkins@yourcompany.com"
+                        git config --global user.name "Jenkins CI"
+                        git checkout master
+                        git pull origin master
+                        date > release.txt
+                        git add release.txt
+                        git commit -m "Nueva versión desplegada en producción"
+                        
+                        # Configurar credenciales para el push
+                        export GIT_ASKPASS=/tmp/git-askpass.sh
+                        echo '#!/bin/sh' > $GIT_ASKPASS
+                        echo 'echo $GIT_PASSWORD' >> $GIT_ASKPASS
+                        chmod +x $GIT_ASKPASS
+                        git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/julianxttecn05/todo-list-aws.git master
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'BASE_URL.txt', fingerprint: true
+        }
+        success {
+            echo "Despliegue exitoso en producción."
+        }
+        failure {
+            echo "Error en el despliegue. Revisa los logs."
+        }
+    }
+}
+
